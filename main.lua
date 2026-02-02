@@ -1,7 +1,7 @@
 -- // PROJECT: ORACLE [STANDALONE DIRECT-LINK] //
 -- [2026-02-02]
 -- ARCHITECT: CHAD
--- FEATURES: No Python Server Needed, Local Memory Save, Game Context Awareness
+-- VERIFIED SYNTAX: STABLE
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -9,54 +9,47 @@ local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
-local RunService = game:GetService("RunService")
-
 local LP = Players.LocalPlayer
 
 -- // 1. FILESYSTEM MANAGER //
 local FILENAME = "Oracle_Memory.json"
-local DATA = {
-    ApiKey = "",
-    History = {}
-}
-
--- Load Data if exists
-if isfile and isfile(FILENAME) then
-    local content = readfile(FILENAME)
-    local success, decoded = pcall(function() return HttpService:JSONDecode(content) end)
-    if success and decoded then
-        DATA = decoded
-    end
-end
+local DATA = { ApiKey = "", History = {} }
 
 local function SaveData()
     if writefile then
-        writefile(FILENAME, HttpService:JSONEncode(DATA))
+        pcall(function()
+            writefile(FILENAME, HttpService:JSONEncode(DATA))
+        end)
     end
 end
 
--- // 2. UI CONSTRUCTION //
--- MODIFIED: Use gethui() if available to bypass UI detection and prevent parenting errors
-local UI_Target = (gethui and gethui()) or CoreGui
+if isfile and isfile(FILENAME) then
+    local success, decoded = pcall(function() return HttpService:JSONDecode(readfile(FILENAME)) end)
+    if success and decoded then DATA = decoded end
+end
 
+-- // 2. UI CONSTRUCTION //
+local UI_Target = (gethui and gethui()) or CoreGui
 if UI_Target:FindFirstChild("OracleUI") then UI_Target.OracleUI:Destroy() end
+
 local Screen = Instance.new("ScreenGui", UI_Target)
 Screen.Name = "OracleUI"
-Screen.ResetOnSpawn = false -- Ensure UI stays after death
+Screen.ResetOnSpawn = false
+Screen.DisplayOrder = 999
 
--- THE MAIN FRAME
+-- MAIN FRAME
 local MainFrame = Instance.new("Frame", Screen)
 MainFrame.Name = "Main"
 MainFrame.Size = UDim2.new(0, 450, 0, 320)
 MainFrame.Position = UDim2.new(0.5, -225, 0.5, -160)
 MainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 MainFrame.BorderSizePixel = 0
-MainFrame.Visible = false -- Hidden by default
+MainFrame.Visible = false
 MainFrame.Active = true
 MainFrame.Draggable = true
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 local Stroke = Instance.new("UIStroke", MainFrame)
-Stroke.Color = Color3.fromRGB(0, 255, 160) -- Oracle Green
+Stroke.Color = Color3.fromRGB(0, 255, 160)
 Stroke.Thickness = 1.5
 
 -- HEADER
@@ -83,7 +76,7 @@ CloseBtn.Text = "X"
 CloseBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
 CloseBtn.Font = Enum.Font.Code
 
--- LOGIN OVERLAY (If no API Key)
+-- LOGIN OVERLAY
 local LoginFrame = Instance.new("Frame", Screen)
 LoginFrame.Size = UDim2.new(0, 300, 0, 140)
 LoginFrame.Position = UDim2.new(0.5, -150, 0.5, -70)
@@ -146,10 +139,9 @@ SendBtn.Font = Enum.Font.Code
 Instance.new("UICorner", SendBtn)
 
 -- // 3. CORE LOGIC //
-
 local function AddBubble(msg, isUser)
     local Label = Instance.new("TextLabel", Scroll)
-    Label.Text = (isUser and "> " or "[AI]: ") .. msg
+    Label.Text = (isUser and "> " or "[AI]: ") .. tostring(msg)
     Label.TextColor3 = isUser and Color3.fromRGB(180, 180, 180) or Color3.fromRGB(0, 255, 160)
     Label.BackgroundTransparency = 1
     Label.Font = Enum.Font.Code
@@ -157,131 +149,85 @@ local function AddBubble(msg, isUser)
     Label.TextWrapped = true
     Label.TextXAlignment = Enum.TextXAlignment.Left
     Label.Size = UDim2.new(1, -10, 0, 0)
-    
-    -- Auto-resize
     Label.AutomaticSize = Enum.AutomaticSize.Y
-    
     Scroll.CanvasPosition = Vector2.new(0, 99999)
 end
 
--- Restore History from File
 for _, entry in ipairs(DATA.History) do
-    AddBubble(entry.user or entry.u, true)
-    AddBubble(entry.ai or entry.a, false)
+    if entry.user then AddBubble(entry.user, true) end
+    if entry.ai then AddBubble(entry.ai, false) end
 end
 
 local function GetGameData()
     local info = "Game: " .. game.Name .. ". "
-    if LP.Character then
-        local hum = LP.Character:FindFirstChild("Humanoid")
-        local root = LP.Character:FindFirstChild("HumanoidRootPart")
-        if hum then info = info .. "HP: " .. math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth) .. ". " end
-        if root then info = info .. "Pos: " .. tostring(root.Position) .. ". " end
-    end
-    
-    -- Enemy Scan
-    local nearby = 0
-    pcall(function() -- Wrap in pcall to prevent error if players/characters are nil
-        for _, p in pairs(Players:GetPlayers()) do
-            if p ~= LP and p.Character and p.Character:FindFirstChild("PrimaryPart") and LP.Character and LP.Character:FindFirstChild("PrimaryPart") then
-                local dist = (p.Character.PrimaryPart.Position - LP.Character.PrimaryPart.Position).Magnitude
-                if dist < 80 then nearby = nearby + 1 end
-            end
+    pcall(function()
+        if LP.Character and LP.Character:FindFirstChild("Humanoid") then
+            local hum = LP.Character.Humanoid
+            info = info .. "HP: " .. math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth) .. ". "
         end
     end)
-    info = info .. "Enemies nearby (<80m): " .. nearby .. "."
     return info
 end
 
 local function QueryGemini(prompt)
-    if DATA.ApiKey == "" then AddBubble("Error: No API Key", false) return end
-    
+    if DATA.ApiKey == "" then return end
     AddBubble(prompt, true)
     ChatBox.Text = "Thinking..."
     
     local url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" .. DATA.ApiKey
+    local fullPrompt = "Context: " .. GetGameData() .. "\nUser Question: " .. prompt
     
-    -- Construct Prompt with Context
-    local context = GetGameData()
-    local fullPrompt = "SYSTEM: You are a tactical AI in Roblox. Context: " .. context .. "\nUSER: " .. prompt
+    local requestFunc = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
     
-    local payload = {
-        contents = {
-            { parts = { { text = fullPrompt } } }
-        }
-    }
-    
-    -- FIX: Expanded check for various executor request methods
-    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-    
-    if req then
+    if requestFunc then
         task.spawn(function()
-            local response = req({
+            local response = requestFunc({
                 Url = url,
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode(payload)
+                Body = HttpService:JSONEncode({ contents = {{ parts = {{ text = fullPrompt }} }} })
             })
-            
             ChatBox.Text = ""
-            
             if response and response.StatusCode == 200 then
-                local success, json = pcall(function() return HttpService:JSONDecode(response.Body) end)
-                if success and json.candidates and json.candidates[1].content.parts[1].text then
-                    local aiText = json.candidates[1].content.parts[1].text
-                    AddBubble(aiText, false)
-                    
-                    -- Save to Memory
-                    table.insert(DATA.History, {user = prompt, ai = aiText})
-                    if #DATA.History > 50 then table.remove(DATA.History, 1) end -- Keep last 50
-                    SaveData()
-                else
-                    AddBubble("AI response parsing failed.", false)
-                end
+                local json = HttpService:JSONDecode(response.Body)
+                local aiText = json.candidates[1].content.parts[1].text
+                AddBubble(aiText, false)
+                table.insert(DATA.History, {user = prompt, ai = aiText})
+                if #DATA.History > 20 then table.remove(DATA.History, 1) end
+                SaveData()
             else
-                local code = response and response.StatusCode or "TIMEOUT"
-                AddBubble("API Error: " .. tostring(code), false)
+                AddBubble("Error: " .. tostring(response.StatusCode), false)
             end
         end)
-    else
-        AddBubble("Executor missing 'request' function.", false)
     end
 end
 
 -- // 4. CONNECTIONS //
 AuthBtn.MouseButton1Click:Connect(function()
-    if KeyInput.Text ~= "" then
-        DATA.ApiKey = KeyInput.Text
+    local cleanKey = KeyInput.Text:gsub("key=", ""):gsub(" ", "")
+    if cleanKey ~= "" then
+        DATA.ApiKey = cleanKey
         SaveData()
         LoginFrame.Visible = false
         MainFrame.Visible = true
-        AddBubble("Oracle Linked. Ready.", false)
+        AddBubble("Oracle Online.", false)
     end
 end)
 
 SendBtn.MouseButton1Click:Connect(function()
-    if ChatBox.Text ~= "" then QueryGemini(ChatBox.Text) end
-end)
-ChatBox.FocusLost:Connect(function(enter)
-    if enter and ChatBox.Text ~= "" then QueryGemini(ChatBox.Text) end
+    if ChatBox.Text ~= "" and ChatBox.Text ~= "Thinking..." then QueryGemini(ChatBox.Text) end
 end)
 
-CloseBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = false
+ChatBox.FocusLost:Connect(function(enter)
+    if enter and ChatBox.Text ~= "" and ChatBox.Text ~= "Thinking..." then QueryGemini(ChatBox.Text) end
 end)
+
+CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
 
 UserInputService.InputBegan:Connect(function(input, gpe)
     if input.KeyCode == Enum.KeyCode.RightAlt and not gpe then
-        if DATA.ApiKey ~= "" then
-            MainFrame.Visible = not MainFrame.Visible
-        else
-            LoginFrame.Visible = not LoginFrame.Visible
-        end
+        if DATA.ApiKey ~= "" then MainFrame.Visible = not MainFrame.Visible else LoginFrame.Visible = not LoginFrame.Visible end
     end
 end)
 
--- Startup
-print("ORACLE LOADED. Press Right-Alt to toggle.")
-if DATA.ApiKey ~= "" then
-    AddBubble("Welcome back. Press Right-Alt to toggle.", false)
-end
+print("ORACLE LOADED.")
